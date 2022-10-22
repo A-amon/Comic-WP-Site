@@ -40,7 +40,11 @@ Include the [uploads](https://github.com/A-amon/Comic-WP-Site/tree/main/uploads/
 - [Reusable Blocks Extended](https://wordpress.org/plugins/reusable-blocks-extended)
 - [Theme My Login](https://wordpress.org/plugins/theme-my-login/)
 - [WP Revisions Control](https://wordpress.org/plugins/wp-revisions-control/)
-
+  
+*Developed on*  
+Wordpress 6.0.3  
+**Theme:** Twenty Twenty-Two  
+XAMPP Version: 7.3.4
 ## Notes
 
 Security-wise, I used [Wordpress' Nonce](https://codex.wordpress.org/WordPress_Nonces) to authenticate/identify the user when  
