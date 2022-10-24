@@ -1,0 +1,420 @@
+/*
+Manage TITLES table
+Add column: genres
+*/
+
+function custom_titles_column_header( $columns ){
+  $columns["genres"] = __("Genres"); 
+
+  return $columns;
+}
+
+function custom_titles_sortable_column_header( $columns ){
+  $columns["genres"] = __("Genres"); 
+
+  return $columns;
+}
+
+function custom_titles_column_content($value, $column_name , $term){
+    if($column_name === "genres"){
+        $genres = get_term_meta($term, 'genres');
+        return join(", ", $genres);
+    }
+}
+
+add_filter( "manage_edit-title_columns", "custom_titles_column_header", 10);
+add_filter( "manage_edit-title_sortable_columns", "custom_titles_sortable_column_header", 10);
+add_action( "manage_title_custom_column", 'custom_titles_column_content', 10, 3);
+
+/*
+Manage CHAPTERS table
+Add column: title
+*/
+
+function custom_chapters_column_header( $columns ){
+  	$columns["title"] = __("Chapter"); 
+  	$columns["book-title"] = __("Title");	// book title
+    unset($columns["date"]);				// move date column to last
+    $columns["date"] = __("Date");
+
+  	return $columns;
+}
+
+function custom_chapters_sortable_column_header( $columns ){
+	$columns["title"] = __("Chapter"); 
+  	$columns["book-title"] = __("Title");	// book title
+    
+  	return $columns;
+}
+
+function custom_chapters_column_content($column_name, $post_id){
+    // Link to title edit page
+    if($column_name === "book-title"){
+    	$taxonomy = "title";
+		$terms = get_the_terms( $post_id, $taxonomy); 
+        
+       	if(! empty( $terms )){
+         	foreach($terms as $term){
+                 $edit_title_url = add_query_arg(array( 
+                                    "tag_ID" => $term->term_id, 
+                                    "taxonomy" => $taxonomy, 
+                                    "post_type" => "chapter"
+                                ), admin_url( "term.php" ));
+             	echo "<a href='{$edit_title_url}'>$term->name</a>";   
+            }
+        }
+        else{
+	        echo "No title";        
+        }
+    }
+}
+
+add_filter( "manage_edit-chapter_columns", "custom_chapters_column_header", 10);
+add_filter( "manage_edit-chapter_sortable_columns", "custom_chapters_sortable_column_header", 10);
+add_action( "manage_chapter_posts_custom_column", "custom_chapters_column_content", 10, 3);
+
+/*
+IF USER LOGGED IN - Redirect to homepage (when visiting login, register, reset/lost password)
+*/
+function redirect_after_authentication($template){
+    global $wp;
+        
+    if(is_user_logged_in()){
+        $url = str_replace(get_site_url(),"",home_url($wp->request));
+        $url_parts = explode("/", $url);
+        $url_parts_count = count($url_parts);
+        if($url_parts_count > 1){
+            if($url_parts[1] === "login" || 
+                     $url_parts[1] === "register" || 
+                     $url_parts[1] === "lost-password" || 
+                     $url_parts[1] === "reset-password"){
+                wp_redirect(get_site_url());
+                exit();
+            }
+        }
+    }
+    
+    return $template;
+}
+
+add_action("template_include","redirect_after_authentication");
+
+/* * * * * * * * * * * * * * * * * * * * * * *
+REST API
+-------------------------------
+Base URL: "{get_site_url()}/wp-json/"
+Follow title	(title/{slug}/follow)
+Rate title		(title/{slug}/rate?value=1)
+* * * * * * * * * * * * * * * * * * * * * * */
+
+add_action("wp_head",function (){
+    if(is_user_logged_in()){
+     	$nonce = wp_create_nonce("wp_rest");
+        $home_url = get_site_url();
+        echo "<script>const API_Settings = {WP_NONCE:'{$nonce}', BASE_URL:'{$home_url}'};</script>";   
+    }
+});
+
+add_action( "rest_api_init", function () {    
+    /*
+    Handle API requests
+    */
+    function follow_title(WP_REST_Request $request){
+        $taxonomy = "title";
+        $slug = trim($request["slug"]);
+        $title = pods($taxonomy,$slug);
+        $user_id = get_current_user_id();
+
+        if($user_id > 0 && $title->exists()){
+            //Check if user has followed title
+            $follows = pods($taxonomy, array(
+                "where" => "slug = '{$slug}' AND followers.ID = {$user_id}"
+            ));  
+            $is_follow = $follows->total() > 0;                    
+
+            if($is_follow){
+                $title->remove_from("followers",$user_id);
+                return false;
+            }
+            else{
+                $title->add_to("followers", $user_id);    
+                return true;
+            }
+        }
+        return new WP_Error( "Invalid Title", 'Title not found in database', array( 'status' => 400 ) );
+    }
+    
+    function rate_title(WP_REST_Request $request){
+        $taxonomy = "title";
+        $slug = trim($request["slug"]);
+        $title = pods($taxonomy,$slug);
+        $user_id = get_current_user_id();
+
+        if($title->exists()){
+        	$value = (int)$request->get_param("value");
+            if($value > 0 && $value <= 5){
+                $taxonomy = "rating";
+                $ratings = pods($taxonomy, array(
+                    	"where" => "book.slug = '{$slug}' AND user.ID = {$user_id}"
+                    ));
+                $is_rated = $ratings->total() > 0;
+
+                if($is_rated){
+                    $rating_id = (int)(($ratings->data())[0]->id);
+                    pods($taxonomy, $rating_id)->save("value",$value);
+                }
+                else{
+                    $rating_data = array(
+                        "user" => $user_id,
+                        "value" => $value,
+                        "book"=> ((int) $title->field("term_id"))
+                    );   
+                    pods($taxonomy)->add($rating_data);
+                }             
+                return true;
+        	}
+            return new WP_Error( "Invalid rating", 'A valid rating is in the range of 1 to 5', array( 'status' => 400 ) );
+        }
+        return new WP_Error( "Invalid Title", 'Title not found in database', array( 'status' => 400 ) );
+    }
+    /*
+    Register API routes
+    */
+    $taxonomy_title = "title";
+
+	register_rest_route( $taxonomy_title, "/(?P<slug>[a-zA-Z0-9-]+)/follow", array(
+            "methods" => "GET",
+            "callback" => "follow_title",
+        	"permission_callback" => "__return_true"
+        ));
+    
+    register_rest_route( $taxonomy_title, "/(?P<slug>[a-zA-Z0-9-]+)/rate", array(
+            "methods" => "GET",
+            "callback" => "rate_title",
+        	"permission_callback" => "__return_true"
+        ));
+});
+
+/* * * * * * * * * * * * * * * * * * * * * * *
+* SHORTCODES
+* > pods-override
+* > follow-title
+* > rate-title
+* > post-time
+* * * * * * * * * * * * * * * * * * * * * * */
+
+/*
+pods-override shortcode
+Set 'id' or 'slug' attribute value to current title or user (taken from current URL)
+Attributes
+- override (Required)
+*/
+add_shortcode( "pods-override", function($atts, $content, $tag){
+    global $wp;
+    
+    $override_field = $atts["override"];
+    if(isset($override_field)){
+        if($override_field === "slug"){
+            $url_parts = explode("/", home_url($wp->request));
+            $current_item_slug = $url_parts[count($url_parts) - 1];
+            $atts["slug"] =  $current_item_slug;
+        }
+        else if($override_field === "id"){
+            $atts["id"] = get_current_user_id();
+        }
+    }
+   
+    return pods_shortcode( $atts );
+});
+
+/*
+post-time shortcode
+Show datetime passed since the provided "datetime" value
+Attributes
+- datetime (Required if current page is not post type)
+*/
+add_shortcode( "post-time", function($atts, $content, $tag){   
+    $posted_datetime = NULL;
+    if(isset($atts["datetime"])){
+        $posted_datetime = new DateTime($atts["datetime"]);
+    }
+    else{
+     	$posted_datetime = new DateTime(get_post_field("post_date", get_post()));   
+    }
+    $current_datetime = new DateTime();
+
+    $datetime_diff = $current_datetime->diff($posted_datetime);
+    $year_diff = $datetime_diff->y;
+    $month_diff = $datetime_diff->m;
+    $day_diff = $datetime_diff->d;
+    $hour_diff = $datetime_diff->h;
+    $min_diff = $datetime_diff->m;
+    $sec_diff = $datetime_diff->s;
+
+    $time_diff = NULL;
+
+    if($year_diff === 0){
+        if($month_diff === 0){
+            if($day_diff === 0){
+                if($hour_diff === 0){
+                    if($min_diff === 0){
+                        $sec_diff = $sec_diff <= 1? 1: $sec_diff;	// if 0 second, show as 1 second
+                        $time_diff = "{$sec_diff} second ago";
+                    }
+                    else{
+                        $time_diff = "{$min_diff} minute ago";
+                    }
+                }
+                else{
+                    $time_diff = "{$hour_diff} minute ago";
+                }
+            }
+            else{
+                $time_diff = "{$day_diff} day ago";
+            }
+        }
+        else{
+            $time_diff = "{$month_diff} month ago";
+        }
+    }
+    else{
+        $time_diff = "{$year_diff} year ago";
+    }
+    $time_diff_parts = explode(" ", $time_diff);
+    error_log($time_diff_parts[0]);
+    $time_diff_parts[1] = $time_diff_parts[1].(((int) $time_diff_parts[0]) > 1?"s":"");
+    $time_diff = join(" ", $time_diff_parts);
+    $posted_datetime_str = json_encode($posted_datetime);
+    return "<time datetime='{$posted_datetime_str}'>{$time_diff}</time>";
+});
+
+/*
+post-control shortcode
+Show Previous/ Next buttons
+Attributes
+- taxonomy (Required if get previous/next post with same taxonomy || Provide taxonomy name)
+- home 	   (Required if replace "Next" link with "Home" link after reaching last post)
+*/
+add_shortcode( "post-control", function($atts, $content, $tag){  
+    $base_url = get_site_url();
+    $previous_post = NULL;
+    $next_post = NULL;
+    $previous_post_link = "";
+    $next_post_link = "";
+    
+    if(isset($atts["taxonomy"]) && !empty($atts["taxonomy"])){
+        $previous_post = get_previous_post(true, "", $atts["taxonomy"]);
+        $next_post = get_next_post(true, "", $atts["taxonomy"]);
+    }
+    else{
+     	$previous_post = get_previous_post(true);
+        $next_post = get_next_post(true);   
+    }
+    
+    if(!is_null($previous_post) && !empty($previous_post)){
+        $post_type = $previous_post->post_type;
+        $post_slug = $previous_post->post_name;
+        $previous_post_link = "<a class='btn-control btn-control--prev' href='{$base_url}/{$post_type}/{$post_slug}'>Previous</a>";   
+    }
+    if(!is_null($next_post) && !empty($next_post)){
+        $post_type = $next_post->post_type;
+        $post_slug = $next_post->post_name;
+        $next_post_link = "<a class='btn-control btn-control--next' href='{$base_url}/{$post_type}/{$post_slug}'>Next</a>";   
+    }
+    else if(isset($atts["home"]) && filter_var($atts["home"], FILTER_VALIDATE_BOOLEAN)){
+        $next_post_link = "<a class='btn-control btn-control--next' href='{$base_url}'><span>Home</span></a>";   
+    }
+    
+    return $previous_post_link.$next_post_link;
+});
+
+/*
+follow-title button shortcode
+Update follow status of user for title
+Attributes
+- slug (Required)
+*/
+add_shortcode( "follow-title", function ($atts, $content, $tag){ 
+    if(array_key_exists("slug",$atts)){
+        $taxonomy = "title";
+        $follow_button_block = reblex_get_block(289);
+
+        if(is_user_logged_in()){
+            $pod = pods($taxonomy,$atts["slug"]);
+            $is_follow = false;
+            if($pod->exists()){
+                //Check if user has followed title
+                $followers = $pod->field("followers");
+                $is_follow = !empty($followers) && current(array_filter($followers, function($follower) {
+                    return (isset($follower["ID"]) && intval($follower["ID"]) === get_current_user_id());
+                }));
+            }
+			
+            $is_follow_str = $is_follow?"true":"false";
+            return $follow_button_block."<script>document.querySelector('#btn-follow__input').checked={$is_follow_str}</script>";
+        }
+        return $follow_button_block;
+    }
+    
+    return "";
+});
+
+/*
+rate-title input shortcode
+Update user's rating for title
+Rating defaults to 1 if no rating yet
+Attributes
+- slug (Required)
+*/
+add_shortcode( "rate-title", function ($atts, $content, $tag){ 
+    if(array_key_exists("slug",$atts)){
+        $taxonomy = "rating";
+        $rating_input_block = reblex_get_block(298);
+        $rating = 0;
+
+        if(is_user_logged_in()){
+            $user_id = get_current_user_id();
+            $ratings = pods($taxonomy, array(
+            	"where" => "book.slug = '{$atts["slug"]}' AND user.ID = {$user_id}"
+            ));
+            $is_rated = $ratings->total() > 0;
+            
+            if($is_rated){
+                $rating = (int) (($ratings->data())[0]->value);   
+            }
+        }
+         if($rating == 0){
+             $ratings = pods($taxonomy, array(
+                 "where" => "book.slug = '{$atts["slug"]}'"
+             ));
+             if($ratings->total() > 0){
+                 $ratings_data = $ratings->data();
+			
+                 $sum_rating = 0;
+                 foreach($ratings_data as $rating){
+                     $sum_rating += ((int) $rating->value);
+                 }
+
+                 $rating = floor($sum_rating/$ratings->total());   // Average rating   
+             }
+         }
+        $rating_index = ($rating - 1) < 0? $rating: ($rating - 1);
+   
+        return $rating_input_block."<script>document.querySelectorAll('.rating-input')[{$rating_index}].checked=true</script>";
+    }
+    
+    return "";
+});
+
+/*
+Allow usage of shortcodes in pods templates
+*/
+add_filter( "pods_shortcode", function( $tags )  {
+  $tags[ "shortcodes" ] = true;
+  
+  return $tags;
+});
+
+/*
+Added define('PODS_SHORTCODE_ALLOW_SUB_SHORTCODES',true); to wp-config.php
+*/
