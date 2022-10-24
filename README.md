@@ -26,6 +26,15 @@ These include code for:
 - Additional columns in Chapters and Titles admin tables
 - Basic Pods Templates code ➡ for displaying books information
 - Basic theme customisations
+- Ready-to-use shortcodes
+
+|Shortcode|Attribute(s)|Description|
+|---------|------------|-----------|
+|pods-override|override|Call Pods shortcode with overridden attributes <br/> E.g. <br/> If override="slug", set `slug` attribute on Pods shortcode to current page's slug|
+|post-time|datetime|Show datetime passed since the provided `datetime` value (Find current post's datetime if `datetime` attribute is unset)
+|post-control|taxonomy, home|Show Previous/ Next post links <br/> Set `taxonomy` attribute to relevant taxonomy name if require previous/next linking to posts with same taxonomy <br/> Set `home` attribute to "true" if require showing "Home" link on last post|
+|follow-title|slug|Set "Follow" button's initial status using "Follow Button" reusable block|
+|rate-title|slug|Set "Rating" input's initial status using "Rating Input" reusable block <br/> Rating defaults to 1 if no rating yet|
 
 Add `define('PODS_SHORTCODE_ALLOW_SUB_SHORTCODES',true);` to `wp-config.php`  
   
